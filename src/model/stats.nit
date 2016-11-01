@@ -14,44 +14,61 @@
 
 module stats
 
-import model::status
+import model::stars
 import model::achievements
 
-redef class AppConfig
+redef class DBContext
 	fun players_ranking: Array[PlayerStats] do
-		var res = new Array[PlayerStats]
-		for player in players.find_all do
-			res.add player.stats(self)
-		end
-		default_comparator.sort(res)
-		return res
+		var pls = all_players
+		var stats = new Array[PlayerStats]
+		for i in pls do stats.add(i.stats)
+		return stats
+	end
+
+	fun mission_count: Int do
+		var res = try_select("COUNT(*) FROM missions;")
+		if res == null then return 0
+		return res.get_count
+	end
+
+	fun star_count: Int do
+		var res = try_select("COUNT(*) FROM stars;")
+		if res == null then return 0
+		return res.get_count
 	end
 end
 
 redef class Player
 
-	fun stats(config: AppConfig): PlayerStats do
-		var stats = new PlayerStats(self)
-		for track_status in tracks_status(config) do
-			stats.missions_count += track_status.missions_count
-			stats.missions_locked += track_status.missions_locked
-			stats.missions_open += track_status.missions_open
-			stats.missions_success += track_status.missions_success
-			stats.stars_count += track_status.stars_count
-			stats.stars_unlocked += track_status.stars_unlocked
-			for mission_status in track_status.missions do
-				if mission_status.is_success then
-					stats.score += mission_status.mission.solve_reward
-				end
-				for star in mission_status.unlocked_stars do
-					stats.score += star.reward
-				end
-			end
-		end
-		for a in achievements(config) do
-			stats.score += a.reward
-			stats.achievements += 1
-		end
+	fun achievement_score: Int do
+		var res = context.try_select("SUM(a.reward) FROM achievements AS a, achievement_unlocks AS au WHERE au.player_id = {id} AND au.achievement_id = a.id;")
+		if res == null then return 0
+		return res.get_count
+	end
+
+	fun mission_score: Int do
+		var res = context.try_select("SUM(m.reward) FROM missions AS m, mission_status AS ms WHERE ms.player_id = {id} AND ms.mission_id = m.id AND ms.status = {context.mission_success}")
+		if res == null then return 0
+		return res.get_count
+	end
+
+	fun star_score: Int do
+		var res = context.try_select("SUM(s.reward) FROM stars AS s, star_status AS ss WHERE ss.player_id = {id} AND ss.status = 1 AND ss.star_id = s.id;")
+		if res == null then return 0
+		return res.get_count
+	end
+
+	fun score: Int do return achievement_score + mission_score + star_score
+
+	fun stats: PlayerStats do
+		var stats = new PlayerStats(context, self)
+		stats.achievements = achievement_count
+		stats.missions_count = context.mission_count
+		stats.missions_open = open_missions_count
+		stats.missions_success = successful_missions_count
+		stats.missions_locked = stats.missions_count - (stats.missions_open + stats.missions_success)
+		stats.stars_count = context.star_count
+		stats.stars_unlocked = star_count
 		return stats
 	end
 end
@@ -65,7 +82,7 @@ class PlayerStats
 
 	var player: Player
 
-	var score = 0
+	var score: Int is lazy do return player.score
 	var achievements = 0
 	var missions_count = 0
 	var missions_locked = 0

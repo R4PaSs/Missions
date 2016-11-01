@@ -31,26 +31,27 @@ class Engine
 	# * prepare the compilation and execution environment
 	# * run the compilation&execution in a sanboxed environment
 	# * retrieve the results
-	fun run(submission: Submission, config: AppConfig) do
+	fun run(submission: Submission) do
 		submission.status = "pending"
 
+		var mission = submission.mission
 		# Not yet completed mission.
-		if submission.mission.testsuite.is_empty then
+		if mission == null or mission.testsuite.is_empty then
 			submission.compilation.title = "Work in progress"
 			submission.compilation.message = "There is no test for this mission yet.\nPlease try again later."
-			set_compilation_error(config, submission)
+			set_compilation_error(submission)
 			return
 		end
 
 		var ok = prepare_workspace(submission)
 		if not ok then
-			set_compilation_error(config, submission)
+			set_compilation_error(submission)
 			return
 		end
 
 		ok = execute(submission)
 		if not ok then
-			set_compilation_error(config, submission)
+			set_compilation_error(submission)
 			return
 		end
 
@@ -68,15 +69,16 @@ class Engine
 		end
 		submission.time_score = time
 		submission.test_errors = errors
-		submission.update_status(config)
+		submission.commit
+		for i in mission.stars do i.check(submission)
 	end
 
 	# Mark the `submission` as an error, and save it in the `config`
-	fun set_compilation_error(config: AppConfig, submission: Submission) do
+	fun set_compilation_error(submission: Submission) do
 		submission.status = "error"
 		submission.compilation.is_error = true
 		submission.results.clear
-		submission.update_status(config)
+		submission.commit
 	end
 
 	# Execute the compilation and test in a sandboxed environment
@@ -162,7 +164,9 @@ class Engine
 		source.write_to_file(sourcefile)
 
 		# Copy each test input
-		var tests = submission.mission.testsuite
+		var mission = submission.mission
+		if mission == null then return false
+		var tests = mission.testsuite
 		for test in tests do
 			# Prepare a new test result for the test case
 			var res = new TestResult(test)

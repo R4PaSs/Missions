@@ -13,11 +13,39 @@
 # Player's submissions for any kind of mission
 module submissions
 
-import missions
+import stars
 import players
-import status
+import loader
 private import markdown
 private import poset
+
+redef class DBContext
+	## Submission status codes
+
+	# Submission submitted code
+	fun submission_submitted: Int do return 1
+
+	# Submission pending code
+	fun submission_pending: Int do return 2
+
+	# Submission successful code
+	fun submission_success: Int do return 3
+
+	# Submission error code
+	fun submission_error: Int do return 4
+
+	##
+
+	# Mapping between verbatim status and database ID
+	protected var submission_statuses = new HashMap[String, Int]
+
+	init do
+		submission_statuses["submitted"] = submission_submitted
+		submission_statuses["pending"] = submission_pending
+		submission_statuses["success"] = submission_success
+		submission_statuses["error"] = submission_error
+	end
+end
 
 # An entry submitted by a player for a mission.
 #
@@ -30,10 +58,13 @@ class Submission
 	serialize
 
 	# The submitter
-	var player: Player
+	var player_id: Int
 
 	# The attempted mission
-	var mission: Mission
+	var mission_id: Int
+
+	# Get the mission linked to the mission id
+	var mission: nullable Mission is lazy, noserialize do return context.mission_by_id(mission_id)
 
 	# The submitted source code
 	var source: String
@@ -42,7 +73,7 @@ class Submission
 	var next_missions: nullable Array[Mission] = null
 
 	# All information about the compilation
-	var compilation = new CompilationResult
+	var compilation: CompilationResult is lazy do return new CompilationResult
 
 	# Individual results for each test case
 	#
@@ -59,7 +90,7 @@ class Submission
 
 	# The name of the working directory.
 	# It is where the source is saved and artifacts are generated.
-	var workspace: nullable String = null is writable
+	var workspace: nullable String = null is writable, noserialize
 
 	# Object file size in bytes.
 	#
@@ -86,37 +117,23 @@ class Submission
 	# The results of each star
 	var star_results = new Array[StarResult]
 
-	# Update status of `self` in DB
-	fun update_status(config: AppConfig) do
-		var mission_status = player.mission_status(config, mission)
-		self.mission_status = mission_status
-
-		mission_status.last_submission = source
-
-		# Update/unlock stars
-		if successful then
-			if mission_status.status != "success" then
-				is_first_solve = true
-			end
-			mission_status.status = "success"
-			for star in mission.stars do star.check(self, mission_status)
-
-			# Unlock next missions
-			# Add next missions to successful submissions
-			var next_missions = new Array[Mission]
-			for mission in mission.load_children(config) do
-				var cstatus = player.mission_status(config, mission)
-				cstatus.status = "open"
-				config.missions_status.save(cstatus)
-				next_missions.add mission
-			end
-			self.next_missions = next_missions
-		end
-
-		config.missions_status.save(mission_status)
-	end
-
 	redef fun to_json do return serialize_to_json
+
+	redef fun insert do
+		var ws = workspace or else "null"
+		var stat = context.submission_statuses.get_or_null(status)
+		if stat == null then
+			print "Error when inserting submission: Unknown status"
+			return false
+		end
+		if not (super and basic_insert("INSERT INTO submissions(event_id, player_id, mission_id, workspace_path, status) VALUES ({id}, {player_id}, {mission_id}, {ws.to_sql_string}, {if successful then context.submission_success else context.submission_error});")) then return false
+		if successful then
+			var m = mission
+			if m == null then return false
+			m.success_for(player_id)
+		end
+		return true
+	end
 end
 
 # This model provides easy deserialization of posted submission forms
@@ -127,59 +144,69 @@ class SubmissionForm
 	var source: String
 	# Engine or runner to be used
 	var engine: String
-	# Language in which the source code is writte
+	# Language in which the source code is written
 	var lang: String
 end
 
 redef class MissionStar
+
+	# The current best score for the star result
+	fun best_score(player_id: Int): nullable Int do
+		var db = context.connection
+		var res = db.select("star_results.score FROM star_results, submissions WHERE star_id = {id} AND submissions.event_id = star_results.submission_id AND submissions.player_id = {player_id} ORDER BY score DESC LIMIT 1;")
+		if res == null then return null
+		var cnt = res.get_count
+		if cnt == 0 then return null
+		return cnt
+	end
+
 	# Check if the star is unlocked for the `submission`
 	# Also update `status`
-	fun check(submission: Submission, status: MissionStatus): Bool do return false
-end
-
-redef class ScoreStar
-	redef fun check(submission, status) do
-		# Search or create the corresponding StarStatus
-		# Just iterate the array
-		var star_status = null
-		for ss in status.stars_status do
-			if ss.star == self then
-				star_status = ss
-				break
-			end
+	fun check(submission: Submission): Bool do
+		if not submission.successful then
+			print "Submission unsuccessful"
+			return false
 		end
-		if star_status == null then
-			star_status = new StarStatus(self)
-			status.stars_status.add star_status
-		end
-
-		if not submission.successful then return false
-
+		# Since we are adding data to the DB which are related
+		# to a submission, its id must be set, hence the submission
+		# must be commited before checking for stars
+		assert submission.id != -1
 		var score = self.score(submission)
-		if score == null then return false
+		if score == null then
+			print "No score registered"
+			return false
+		end
 
-		var star_result = new StarResult(self)
-		submission.star_results.add star_result
-		star_result.goal = goal
-		star_result.new_score = score
-		var best = star_status.best_score
+		# Search or create the corresponding StarStatus
+		var star_status = status(submission.player_id)
+		if star_status == null then star_status = new StarStatus(context, submission.player_id, id)
+		var star_result = new StarResult(context, submission.id, id, score)
+
+		var changed = false
+
+		# Best score?
+		var best = best_score(submission.player_id)
 		star_result.old_score = best
 
 		# Best score?
 		if best == null or score < best then
-			star_status.best_score = score
 			if best != null then
 				star_result.is_highscore = true
 			end
+			changed = true
 		end
 
 		# Star granted?
-		if not status.unlocked_stars.has(self) and score <= goal then
+		if not star_status.is_unlocked and score <= goal then
 			star_status.is_unlocked = true
 			star_result.is_unlocked = true
-			return true
+			changed = true
 		end
-		return false
+
+		star_status.commit
+		star_result.commit
+		submission.star_results.add star_result
+		return changed
 	end
 
 	# The specific score in submission associated to `self`
@@ -207,7 +234,6 @@ end
 
 # The specific information about compilation (or any internal affair)
 class CompilationResult
-	super Entity
 	serialize
 
 	# The title of the box
@@ -222,13 +248,12 @@ end
 
 # A specific execution of a test case by a submission
 class TestResult
-	super Entity
 	serialize
 
 	# The test case considered
 	var testcase: TestCase
 
-	# The output of the `submission` when feed by `testcase.provided_input`.
+	# The output of the `submission` when fed by `testcase.provided_input`.
 	var produced_output: nullable String = null is writable
 
 	# Error message
@@ -245,20 +270,20 @@ end
 # The specific submission result on a star
 # Unlike the star status, this shows what is *new*
 class StarResult
-	super Entity
+	super UniqueEntity
 	serialize
 
-	# Information about the star
-	var star: MissionStar
+	# The associated submission id
+	var submission_id: Int
 
-	# The goal of the star, if any
-	var goal: nullable Int = null
+	# The associated star id
+	var star_id: Int
 
-	# The previous score, if any
-	var old_score: nullable Int = null
+	# The star associated to result
+	var star: nullable MissionStar is lazy do return context.star_by_id(star_id)
 
-	# The new score, if any
-	var new_score: nullable Int = null
+	# The new score
+	var score: Int
 
 	# Is the star unlocked?
 	var is_unlocked = false
@@ -266,23 +291,24 @@ class StarResult
 	# Is the new_score higher than then old_score?
 	var is_highscore = false
 
+	# Old best score, if exists
+	var old_score: nullable Int
+
 	redef fun to_s do
-		var res = "STAR {star.title}"
+		var st = star
+		var title = "Unknown star"
+		if st != null then title = st.title
+		var res = "STAR {title}"
 		if is_unlocked then
 			res += " UNLOCKED!"
 		else if is_highscore then
 			res += " NEW BEST SCORE!"
 		end
 
-		var goal = self.goal
-		if goal != null then
-			res += " goal: {goal}"
+		if st != null then
+			res += " goal: {st.goal}"
 		end
-
-		var new_score = self.new_score
-		if new_score != null then
-			res += " score: {new_score}"
-		end
+		res += " score: {score}"
 
 		var old_score = self.old_score
 		if old_score != null then
@@ -290,4 +316,6 @@ class StarResult
 		end
 		return res
 	end
+
+	redef fun insert do return basic_insert("INSERT INTO star_results(submission_id, star_id, score) VALUES ({submission_id}, {star_id}, {score});")
 end

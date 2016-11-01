@@ -17,159 +17,225 @@ module friends
 import model::notifications
 import model::achievements
 
-redef class AppConfig
-	var friend_requests = new FriendRequestRepo(db.collection("friend_requests")) is lazy
+redef class DBContext
+
+	fun friend_request_worker: FriendRequestWorker do return once new FriendRequestWorker
+	fun friend_request_by_id(id: Int): nullable FriendRequest do return friend_request_worker.fetch_one(self, "ev.id AS id, ev.datetime AS datetime, frd.player_id1 AS from, frd.player_id2 AS to, frd.status AS status FROM events AS ev, friend_events AS frd WHERE ev.id = {id} AND frd.event_id = ev.id;")
+
+	# 0 - Unanswered
+	fun friend_request_unanswered: Int do return 0
+	# 1 - Accepted
+	fun friend_request_accepted: Int do return 1
+	# 2 - Rejected
+	fun friend_request_rejected: Int do return 2
+end
+
+redef class Statement
+	fun to_friend_requests(ctx: DBContext): Array[FriendRequest] do
+		return ctx.friend_request_worker.
+			fetch_multiple_from_statement(ctx, self)
+	end
+end
+
+class FriendRequestWorker
+	super EntityWorker
+
+	redef type ENTITY: FriendRequest
+
+	redef fun entity_type do return "FriendRequest"
+
+	redef fun expected_data do return once ["id", "datetime", "from_id", "to_id", "status"]
+
+	redef fun make_entity_from_row(ctx, row) do
+		var m = row.map
+		var id = m["id"].as(Int)
+		var date = m["datetime"].as(Int)
+		var from = m["from_id"].as(Int)
+		var to = m["to_id"].as(Int)
+		var status = m["status"].as(Int)
+		var ret = new FriendRequest(ctx, from, to)
+		ret.status = status
+		ret.id = id
+		ret.timestamp = date
+		return ret
+	end
 end
 
 redef class Player
 	serialize
 
-	# Ids of `self` friend.
-	var friends = new Array[String]
-
-	# Add a new friend to player
-	fun add_friend(config: AppConfig, player: Player) do
-		if player.id == id then return
-		if friends.is_empty then
-			add_achievement(config, new FirstFriendAchievement(self))
+	fun unlock_first_friend_achievement do
+		if friend_count == 1 then
+			var achievement = context.achievement_by_slug("alone_no_more")
+			if achievement == null then
+				achievement = new FirstFriendAchievement(context)
+				achievement.commit
+			end
+			add_achievement(achievement)
 		end
-		friends.add player.id
-		config.players.save self
 	end
 
-	fun remove_friend(config: AppConfig, player: Player) do
-		friends.remove player.id
-		config.players.save self
+	fun friend_count: Int do
+		var res = context.try_select("COUNT(*) FROM friends WHERE player_id1 = {id};")
+		if res == null then return 0
+		return res.get_count
 	end
 
-	# Is `player` an accepted friend of `self`?
-	fun has_friend(player: Player): Bool do
-		return friends.has(player.id)
-	end
-
-	fun load_friends(config: AppConfig): Array[Player] do
-		var res = new Array[Player]
-		for fid in friends do
-			var friend = config.players.find_by_id(fid)
-			if friend == null then continue
-			res.add friend
+	fun remove_friend(player: Player): Bool do
+		var db = context.connection
+		var query = "DELETE FROM friends WHERE (player_id1 = {id} AND player_id2 = {player.id}) OR (player_id1 = {player.id} AND player_id2 = {id});"
+		if not db.execute(query) then
+			print "Unable to remove friend '{player.name}' from database due to error '{db.error or else "Unknown error"}'"
+			return false
 		end
-		return res
+		return true
 	end
 
-	# Friend requests received by `self`
-	fun received_friend_requests(config: AppConfig): Array[FriendRequest] do
-		return config.friend_requests.find_to_player(self)
+	# Is `player_id` an accepted friend of `self`?
+	fun has_friend(player_id: Int): Bool do
+		var res = context.try_select("COUNT(*) FROM friends WHERE player_id2 = {player_id};")
+		return res != null and res.get_count != 0
 	end
 
-	# Friend requests sent by `self`
-	fun sent_friend_requests(config: AppConfig): Array[FriendRequest] do
-		return config.friend_requests.find_from_player(self)
-	end
+	fun friends: Array[Player] do return context.player_worker.fetch_multiple(context, "players.* FROM players, friends WHERE friends.player_id1 = {id} AND players.id = friends.player_id2;")
 
 	# Does `self` already have a friend request from `player`?
-	fun has_friend_request_from(config: AppConfig, player: Player): Bool do
-		return config.friend_requests.find_between(player, self) != null
+	fun has_friend_request_from(player_id: Int): Bool do
+		var res = context.try_select("COUNT(*) FROM events AS ev, friend_events AS frd WHERE frd.player_id1 = {player_id} AND frd.status = {context.friend_request_unanswered} AND frd.event_id = ev.id;")
+		return res != null and res.get_count != 0
 	end
 
 	# Create a friend request from `self` to `player`
 	#
 	# Returns the friend request if the request was created.
 	# `null` means the player is already a friend or already has a friend request.
-	fun ask_friend(config: AppConfig, player: Player): nullable FriendRequest do
+	fun ask_friend(player: Player): nullable FriendRequest do
 		if self == player then return null
-		if player.has_friend(self) then return null
-		if player.has_friend_request_from(config, self) then return null
-		var fr = new FriendRequest(self, player)
-		config.friend_requests.save fr
-		player.add_notification(config, fr.new_notification)
+		if player.has_friend(id) then return null
+		if player.has_friend_request_from(id) then return null
+		var fr = new FriendRequest(context, id, player.id)
+		fr.commit
 		return fr
 	end
 
-	# Accept a friend request
-	#
-	# Return `true` is the request has been accepted.
-	fun accept_friend_request(config: AppConfig, friend_request: FriendRequest): Bool do
-		if friend_request.to.id != id then return false
-		if friend_request.from.id == id then return false
-		add_friend(config, friend_request.from)
-		friend_request.from.add_friend(config, self)
-		config.friend_requests.remove_by_id(friend_request.id)
-		friend_request.from.add_notification(config, friend_request.accept_notification)
-		return true
-	end
+	# Get all open friend requests
+	fun open_friend_requests: Array[FriendRequest] do return context.friend_request_worker.fetch_multiple(context, "ev.id AS id, ev.datetime AS datetime, frd.player_id1 AS from_id, frd.player_id2 AS to_id, frd.status AS status FROM events AS ev, friend_events AS frd WHERE (frd.player_id2 = {id} OR frd.player_id1 = {id}) AND frd.status = {context.friend_request_unanswered} AND frd.event_id = ev.id;")
 
-	# Decline a friend request
-	#
-	# Return `true` is the request has been declined.
-	fun decline_friend_request(config: AppConfig, friend_request: FriendRequest): Bool do
-		if friend_request.to.id != id then return false
-		config.friend_requests.remove_by_id(friend_request.id)
-		return true
-	end
+	# All the requests received by `self`
+	fun received_friend_requests: Array[FriendRequest] do return context.friend_request_worker.fetch_multiple(context, "ev.id AS id, ev.datetime AS datetime, frd.player_id1 AS from_id, frd.player_id2 AS to_id, frd.status AS status FROM events AS ev, friend_events AS frd WHERE frd.player_id2 = {id} AND frd.event_id = ev.id;")
+
+	# All the requests sent by `self`
+	fun sent_friend_requests: Array[FriendRequest] do return context.friend_request_worker.fetch_multiple(context, "ev.id AS id, ev.datetime AS datetime, frd.player_id1 AS from_id, frd.player_id2 AS to_id, frd.status AS status FROM events AS ev, friend_events AS frd WHERE frd.player_id1 = {id} AND frd.event_id = ev.id;")
 end
 
 class FriendRequest
 	super Event
 	serialize
 
-	var from: Player
-	var to: Player
+	# Who asked to be friend
+	var from_id: Int
 
-	# Build a new notification based on `self`
-	fun new_notification: FriendRequestNotification do
-		return new FriendRequestNotification(self)
+	# Player object for from
+	var from: nullable Player is lazy do return context.player_by_id(from_id)
+
+	# To whom is the request targeted?
+	var to_id: Int
+
+	# Player object for to
+	var to: nullable Player is lazy do return context.player_by_id(to_id)
+
+	# Status of the request
+	#
+	# 0 - Unanswered
+	# 1 - Accepted
+	# 2 - Rejected
+	var status = 0
+
+	fun accept: Bool do
+		status = context.friend_request_accepted
+		var from = from
+		var to = to
+		if from == null or to == null then
+			print "Error: FriendRequest {id} concerns at least one non existing player, {from or else from_id} or {to or else to_id}"
+			return false
+		end
+		var ret = commit
+		var notif_from = new FriendRequestAcceptNotification(context, id, from_id, to_id)
+		var notif_to = new FriendRequestAcceptNotification(context, id, to_id, from_id)
+		notif_from.commit
+		notif_to.commit
+		from.unlock_first_friend_achievement
+		to.unlock_first_friend_achievement
+		return ret
 	end
 
-	# Build a new notification based on `self`
-	fun accept_notification: FriendRequestAcceptNotification do
-		return new FriendRequestAcceptNotification(self)
+	fun decline: Bool do
+		status = context.friend_request_rejected
+		var ret = commit
+		return ret
 	end
 
 	redef fun ==(o) do return o isa SELF and o.id == id
-end
 
-class FriendRequestRepo
-	super MongoRepository[FriendRequest]
-
-	# Friend request between `player1` and `player2`
-	fun find_between(player1, player2: Player): nullable FriendRequest do
-		return find((new MongoMatch).eq("from._id", player1.id).eq("to._id", player2.id))
+	redef fun insert do
+		var from = from
+		var to = to
+		if from == null or to == null then
+			print "Cannot insert friend request to database due to either player not existing"
+			return false
+		end
+		if not (super and basic_insert("INSERT INTO friend_events(event_id, player_id1, player_id2, status) VALUES({id}, {from}, {to}, {status});")) then return false
+		if status == context.friend_request_accepted then return make_friend
+		var notif = new FriendRequestNotification(context, id, to_id, from_id)
+		notif.commit
+		return true
 	end
 
-	# Friend requests from `player`
-	fun find_from_player(player: Player): Array[FriendRequest] do
-		return find_all((new MongoMatch).eq("from._id", player.id))
+	redef fun update do
+		if not (super and basic_update("UPDATE friend_events SET status = {status} WHERE event_id = {id};")) then return false
+		if status == context.friend_request_accepted then return make_friend
+		return true
 	end
 
-	# Friend requests to `player`
-	fun find_to_player(player: Player): Array[FriendRequest] do
-		return find_all((new MongoMatch).eq("to._id", player.id))
+	fun make_friend: Bool do
+		var db = context.connection
+		var query = "INSERT INTO friends(player_id1, player_id2) VALUES ({from_id}, {to_id}), ({to_id}, {from_id});"
+		if not db.execute(query) then
+			context.log_sql_error(self, query)
+			return false
+		end
+		return true
 	end
 end
 
 class FriendRequestNotification
 	super PlayerNotification
 	serialize
-	autoinit(friend_request)
 
-	redef var player is lazy do return friend_request.to
-
-	var friend_request: FriendRequest
+	# Who sent the friend request
+	var from_id: Int
 
 	redef var object = "New friend request"
-	redef var body = "Someone want to be your friend."
-	redef var icon = "user"
+	redef var body is lazy do
+		var p = context.player_by_id(from_id)
+		if p != null then return "{p.name} wants to be your friend."
+		return "Error: No player could be found"
+	end
 end
 
 class FriendRequestAcceptNotification
-	super FriendRequestNotification
+	super PlayerNotification
 	serialize
 
-	redef var player is lazy do return friend_request.from
+	# Player receiving the request
+	var to_id: Int
 
 	redef var object = "Accepted friend request"
-	redef var body = "Someone accepted your friend request."
+	redef var body is lazy do
+		var p = context.player_by_id(to_id)
+		if p != null then return "You and {p.name} are now friends."
+		return "Error: No player could be found"
+	end
 end
 
 # First friend achievement
@@ -178,11 +244,9 @@ end
 class FirstFriendAchievement
 	super Achievement
 	serialize
-	autoinit player
+	autoinit(context)
 
-	redef var key = "first_friend"
-	redef var title = "No more alone"
+	redef var title = "Alone no more"
 	redef var desc = "Get your first friend."
 	redef var reward = 30
-	redef var icon = "user"
 end

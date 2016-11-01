@@ -16,114 +16,132 @@ module achievements
 
 import model::notifications
 
-redef class AppConfig
-	var achievements = new AchievementRepo(db.collection("achievements")) is lazy
+redef class DBContext
+	fun achievement_worker: AchievementWorker do return once new AchievementWorker
+
+	# Gets an `Achievement` by its `id`
+	fun achievement_by_id(id: Int): nullable Achievement do return achievement_worker.fetch_one(self, "* FROM achievements WHERE id = {id};")
+
+	fun achievement_by_slug(slug: String): nullable Achievement do return achievement_worker.fetch_one(self, "* FROM achievements WHERE slug = {slug.to_sql_string};")
+
+	fun all_achievements: Array[Achievement] do return achievement_worker.fetch_multiple(self, "* FROM achievements;")
 end
 
-# Achievement representation
-#
-# Achievement are notorious acts performed by players.
+redef class Statement
+	# Gets all the Achievement items from `self`
+	#
+	# Returns an empty array if none were found or if a row
+	# was non-compliant with the construction of an Achievement
+	fun to_achievements(ctx: DBContext): Array[Achievement] do
+		return ctx.achievement_worker.
+			fetch_multiple_from_statement(ctx, self)
+	end
+end
+
+class AchievementWorker
+	super EntityWorker
+
+	redef type ENTITY: Achievement
+
+	redef fun entity_type do return "Achievement"
+
+	redef fun expected_data do return once ["id", "slug", "title", "description", "reward"]
+
+	redef fun make_entity_from_row(ctx, row) do
+		var m = row.map
+		var id = m["id"].as(Int)
+		var slug = m["slug"].as(String)
+		var title = m["title"].as(String)
+		var desc = m["description"].as(String)
+		var reward = m["reward"].as(Int)
+		var ach = new Achievement(ctx, title, desc, reward)
+		ach.slug = slug
+		ach.id = id
+		return ach
+	end
+end
+
+# Notable acts performed by players.
 class Achievement
-	super Event
+	super UniqueEntity
 	serialize
 
-	# Achievement key used to identify all instances of an achievement
-	var key: String
-
-	# Player who unlocked this achievement
-	var player: Player
+	# Key name for `self`
+	var slug: String is lazy do return title.strip_id
 
 	# Achievement title (should be short and punchy)
-	var title: String
+	var title: String is writable(set_title)
 
 	# Achievement description (explains how to get this achievement)
 	var desc: String
 
-	# Points rewarded when this achievement is unlocked
+	# Reward for unlocking the achievement
 	var reward: Int
 
-	# Icon associated to this achievement
-	var icon: String
+	fun title=(title: String) do
+		set_title title
+		slug = title.strip_id
+	end
 
 	# List players who unlocked `self`
-	fun players(config: AppConfig): Array[Player] do
-		var achs = config.achievements.collection.aggregate(
-			(new MongoPipeline).
-				match((new MongoMatch).eq("key", key)).
-				group(new MongoGroup("$player._id")))
-		var res = new HashSet[Player]
-		for a in achs do
-			var player = config.players.find_by_id(a["_id"].as(String))
-			if player == null then continue
-			res.add player
-		end
-		return res.to_a
+	fun players: Array[Player] do
+		if id == -1 then return new Array[Player]
+		return context.player_worker.fetch_multiple(context, "players.* FROM achievement_unlocks AS unlocks, players WHERE unlocks.achievement = {id} AND unlocks.player_id = players.id;")
 	end
+
+	redef fun insert do return basic_insert("INSERT INTO achievements(slug, title, description, reward) VALUES ({slug.to_sql_string}, {title.to_sql_string}, {desc.to_sql_string}, {reward});")
+
+	redef fun update do return basic_update("UPDATE achievements SET title = {title.to_sql_string}, slug = {slug.to_sql_string}, description = {desc.to_sql_string}, WHERE id = {id};")
 end
 
 redef class Player
 	serialize
 
 	# Does `self` already unlocked `achievement`?
-	fun has_achievement(config: AppConfig, achievement: Achievement): Bool do
-		return config.achievements.player_has_achievement(self, achievement)
+	fun has_achievement(achievement: Achievement): Bool do
+		var res = context.try_select("COUNT(*) FROM achievement_unlocks WHERE player_id = {id} AND achievement_id = {achievement.id};")
+		return res != null and res.get_count == 1
 	end
 
 	# Lists all achievements unlocked by `self`
-	fun achievements(config: AppConfig): Array[Achievement] do
-		return config.achievements.find_by_player(self)
-	end
+	fun achievements: Array[Achievement] do return context.achievement_worker.fetch_multiple(context, "a.* FROM achievements AS a, achievement_unlocks AS unlocks WHERE unlocks.player_id = {id} AND a.id = unlocks.achievement_id;")
 
 	# Unlocks `achievement` for `self`
 	#
 	# Return false if `self` already unlocked `achievement`
-	fun add_achievement(config: AppConfig, achievement: Achievement): Bool do
-		if has_achievement(config, achievement) then return false
-		config.achievements.save achievement
-		add_notification(config, new AchievementUnlockedNotification(achievement))
-		return true
+	fun add_achievement(achievement: Achievement): Bool do
+		if has_achievement(achievement) then return false
+		var unlock = new AchievementUnlock(context, achievement.id, id)
+		if not unlock.commit then return false
+		var notif = new AchievementUnlocked(context, unlock.id, id, achievement)
+		return notif.commit
+	end
+
+	# How many achievements have been unlocked?
+	fun achievement_count: Int do
+		var res = context.try_select("COUNT(*) FROM achievement_unlocks WHERE player_id = {id};")
+		if res == null then return 0
+		return res.get_count
 	end
 end
 
-# Achievements repository
-class AchievementRepo
-	super MongoRepository[Achievement]
+class AchievementUnlock
+	super Event
 
-	fun group_achievements: Array[Achievement] do
-		var ach_ids = collection.aggregate((new MongoPipeline).group(new MongoGroup("$key")))
-		var res = new Array[Achievement]
-		for id in ach_ids do
-			var a = find_by_key(id["_id"].as(String))
-			if a != null then res.add a
-		end
-		return res
-	end
+	var achievement_id: Int
+	var player_id: Int
 
-	fun find_by_player(player: Player): Array[Achievement] do
-		return find_all((new MongoMatch).eq("player._id", player.id))
-	end
-
-	fun player_has_achievement(player: Player, achievement: Achievement): Bool do
-		return find((new MongoMatch).
-			eq("player._id", player.id).
-			eq("key", achievement.key)) != null
-	end
-
-	fun find_by_key(key: String): nullable Achievement do
-		return find((new MongoMatch).eq("key", key))
-	end
+	redef fun insert do return super and basic_insert("INSERT INTO achievement_unlocks(event_id, achievement_id, player_id) VALUES ({id}, {achievement_id}, {player_id})")
 end
 
-class AchievementUnlockedNotification
+class AchievementUnlocked
 	super PlayerNotification
 	serialize
-	autoinit(achievement)
-
-	redef var player is lazy do return achievement.player
-
-	var achievement: Achievement
 
 	redef var object = "Achievement unlocked"
-	redef var body = "You unlocked a new achievement."
+	redef var body is lazy do return "You unlocked a new achievement: {achievement.title}"
 	redef var icon = "check"
+
+	# The achievement unlocked
+	var achievement: Achievement
 end

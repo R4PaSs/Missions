@@ -16,56 +16,77 @@ module notifications
 
 import model::players
 
-redef class AppConfig
-	var notifications = new PlayerNotificationRepo(db.collection("notifications")) is lazy
+redef class DBContext
+	fun notification_worker: NotificationWorker do return once new NotificationWorker
+
+	fun notification_by_id(id: Int): nullable PlayerNotification do return notification_worker.fetch_one(self, "* FROM notifications WHERE id = {id};")
+end
+
+redef class Statement
+	fun to_notifications(ctx: DBContext): Array[PlayerNotification] do
+		return ctx.notification_worker.
+			fetch_multiple_from_statement(ctx, self)
+	end
+end
+
+class NotificationWorker
+	super EntityWorker
+
+	redef type ENTITY: PlayerNotification
+
+	redef fun entity_type do return "PlayerNotification"
+
+	redef fun expected_data do return once ["id", "event_id", "player_id", "object", "body", "read", "timestamp"]
+
+	redef fun make_entity_from_row(ctx, row) do
+		var m = row.map
+		var id = m["id"].as(Int)
+		var pid = m["player_id"].as(Int)
+		var obj = m["object"].as(String)
+		var body = m["body"].as(String)
+		var eid = m["event_id"].as(Int)
+		var read = m["read"].as(Int) == 1
+		var timestamp = m["timestamp"].as(Int)
+		var ret = new PlayerNotification(ctx, eid, pid)
+		ret.object = obj
+		ret.body = body
+		ret.id = id
+		ret.read = read
+		ret.timestamp = timestamp
+		return ret
+	end
 end
 
 redef class Player
-	fun notifications(config: AppConfig): Array[PlayerNotification] do
-		return config.notifications.find_by_player(self)
-	end
+	fun notifications: Array[PlayerNotification] do return context.notification_worker.fetch_multiple(context, "* FROM notifications, events WHERE notifications.player_id = {id} AND events.id = notifications.event_id;")
 
-	fun add_notification(config: AppConfig, notification: PlayerNotification) do
-		config.notifications.save notification
-	end
+	fun open_notifications: Array[PlayerNotification] do return context.notification_worker.fetch_multiple(context, "* FROM notifications, events WHERE notifications.player_id = {id} AND events.id = notifications.event_id AND notifications.read = 0;")
 
-	fun clear_notifications(config: AppConfig): Bool do
-		return config.notifications.remove_by_player(self)
-	end
-
-	fun clear_notification(config: AppConfig, notification: PlayerNotification): Bool do
-		if id != notification.player.id then return false
-		return config.notifications.remove_by_id(notification.id)
+	fun clear_notifications: Bool do
+		var query = "UPDATE notifications SET read = 1 WHERE notifications.read = 0 AND notifications.player_id = {id}"
+		return context.connection.execute(query)
 	end
 end
 
-# Player representation
-#
-# Each player is linked to a Github user
+# Notification of an event to a player
 class PlayerNotification
-	super Event
+	super UniqueEntity
 	serialize
 
-	var player: Player
-	var object: String
-	var body: String
+	var event_id: Int
+	var player_id: Int
+	var timestamp: Int is lazy do return get_time
+	var object: String is noinit
+	var body: String is noinit
+	var read = false
 	var icon = "envelope"
-end
 
-class PlayerNotificationRepo
-	super MongoRepository[PlayerNotification]
-
-	redef fun find_all(q, s, l) do
-		var oq = new MongoMatch
-		if q isa MongoMatch then oq = q
-		return aggregate((new MongoPipeline).match(oq).sort((new MongoMatch).eq("timestamp", -1)))
+	fun clear: Bool do
+		read = true
+		return commit
 	end
 
-	fun find_by_player(player: Player): Array[PlayerNotification] do
-		return find_all((new MongoMatch).eq("player._id", player.id))
-	end
+	redef fun insert do return basic_insert("INSERT INTO notifications(event_id, player_id, object, body, read, timestamp) VALUES({event_id}, {player_id}, {object.to_sql_string}, {body.to_sql_string}, 0, {timestamp});")
 
-	fun remove_by_player(player: Player): Bool do
-		return remove_all((new MongoMatch).eq("player._id", player.id))
-	end
+	redef fun update do return basic_update("UPDATE notifications SET read = {if read then 1 else 0} WHERE id = {id};")
 end
