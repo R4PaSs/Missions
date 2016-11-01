@@ -12,53 +12,51 @@ import debug
 var config = new AppConfig
 config.parse_options(args)
 
-# clean bd
-config.db.drop
+with ctx = new DBContext do
+	# Create a dummy user
+	var player = new Player(ctx, "nit_doe", "Nit Doe", "john.doe@unknown.ld", "avatar.cx")
+	player.commit
 
-# Load nit
-config.load_track("tracks/nit")
 
-# Create a dummy user
-var player = new Player("John", "Doe")
-config.players.save player
+	# Run some submission on the missions
+	var mission = ctx.mission_by_slug("nit:hello_world")
+	if mission == null then return
 
-# Run some submission on the missions
-var mission = config.missions.find_all.first
-
-print "Mission {mission} {mission.testsuite.length}"
-var i = 0
-for source in [
-"""
-""",
-"""
-echo Hello, World!
-""",
-"""
-print "hello world"
-""",
-"""
-class Hello
-	fun hi: String do return "Hello, World!"
-end
-print((new Hello).hi)
-""",
-"""
-print "Hello, World!"
-"""
-] do
-	print "## Try source {i} ##"
-	var prog = new Submission(player, mission, source)
-	var runner = config.engine_map["nitc"]
-	runner.run(prog, config)
-	print "** {prog.status} errors={prog.test_errors}/{prog.results.length} size={prog.size_score or else "-"} time={prog.time_score or else "-"}"
-	var msg = prog.compilation.message
-	if msg != null then print "{msg}"
-	for res in prog.results do
-		var msg_test = res.error
-		if msg_test != null then print "test {res.testcase.number}: {msg_test}"
+	print "Mission {mission} {mission.testsuite.length}"
+	var i = 0
+	for source in [
+	"""
+	""",
+	"""
+	echo Hello, World!
+	""",
+	"""
+	print "hello world"
+	""",
+	"""
+	class Hello
+		fun hi: String do return "Hello, World!"
 	end
-	for e in prog.star_results do
-		print e
+	print((new Hello).hi)
+	""",
+	"""
+	print "Hello, World!"
+	"""
+	] do
+		print "## Try source {i} ##"
+		var prog = new Submission(ctx, player.id, mission.id, source)
+		var runner = config.engine_map["nitc"]
+		runner.run(prog)
+		print "** {prog.status} errors={prog.test_errors}/{prog.results.length} size={prog.size_score or else "-"} time={prog.time_score or else "-"}"
+		var msg = prog.compilation.message
+		if msg != null then print "{msg}"
+		for res in prog.results do
+			var msg_test = res.error
+			if msg_test != null then print "test {res.testcase.number}: {msg_test}"
+		end
+		for e in prog.star_results do
+			print e
+		end
+		i += 1
 	end
-	i += 1
 end
