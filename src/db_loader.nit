@@ -16,68 +16,90 @@ import model
 import model::loader
 import api
 
-var config = new AppConfig
-config.parse_options(args)
+redef class DBContext
+	fun player_count: Int do
+		var db = connection
+		var res = db.select("COUNT(*) FROM players;")
+		if res == null then
+			log_sql_error
+			return 0
+		end
+		return res.get_count
+	end
 
+	fun track_count: Int do
+		var db = connection
+		var res = db.select("COUNT(*) FROM tracks;")
+		if res == null then
+			log_sql_error
+			return 0
+		end
+		return res.get_count
+	end
+end
 
-# Use level 0 to disable debug things
+#var opts = new AppOptions.from_args(args)
+#var config = new AppConfig.from_options(opts)
+
 var level = 1
 if args.length >= 1 then level = args[0].to_i
 
-# clean bd
-config.players.clear
-config.notifications.clear
-config.achievements.clear
-config.friend_requests.clear
-config.tracks.clear
-config.missions.clear
-config.missions_status.clear
-
-config.load_tracks "tracks"
-
-if level >= 1 then
-	config.load_tracks "tracks-wip"
-
+with ctx = new DBContext do
 	# load some tracks and missions
 	var track_count = 5 * level
 	for i in [1..track_count] do
-		var track = new Track("track{i}", "Track {i}", "desc {i}")
-		config.tracks.save track
+		var track = new Track(ctx, "Track {i}", "desc {i}", "track{i}")
+		track.commit
 		var last_missions = new Array[Mission]
-		var mission_count = (10 * level).rand
+		var mission_count = (10 * level).rand + 1
 		for j in [1..mission_count] do
-			var mission = new Mission("track{i}:mission{j}", track, "Mission {i}-{j}", "desc {j}")
+			var mission = new Mission(ctx, "track{i}:mission{j}", "Mission {i}-{j}", track.id, "desc {j}")
+			print "Added mission {mission}"
 			if last_missions.not_empty then
+				var parents = new Array[Mission]
 				if 100.rand > 75 then
-					mission.parents.add last_missions.last.id
+					parents.add last_missions.last
 				else
-					mission.parents.add last_missions.rand.id
+					parents.add last_missions.rand
 				end
 				if 100.rand > 50 then
-					var rand = last_missions.rand.id
-					if not mission.parents.has(rand) then mission.parents.add rand
+					var rand = last_missions.rand
+					if not parents.has(rand) then parents.add rand
 				end
+				mission.parents = parents
 			end
+			mission.commit
 			var star_count = (4 * level).rand
 			for s in [1..star_count] do
-				mission.add_star(new MissionStar("star{s} explanation", 100.rand))
+				var star = new MissionStar(ctx, "star{s} explanation", 100.rand, mission.id, 1)
+				star.commit
 			end
 			last_missions.add mission
-			config.missions.save mission
 		end
 	end
 
+	ctx.load_tracks "tracks"
+
 	# load some players
-	var morriar = new Player("Morriar", "Morriar", avatar_url= "https://avatars.githubusercontent.com/u/583144?v=3")
-	config.players.save morriar
-	var privat = new Player("privat", "privat", avatar_url= "https://avatars2.githubusercontent.com/u/135828?v=3")
-	config.players.save privat
+	var morriar = new Player(ctx, "Morriar", "Morriar", "morriar@dummy.cx", "https://avatars.githubusercontent.com/u/583144?v=3")
+	morriar.commit
+	var privat = new Player(ctx, "privat", "privat", "privat@dummy.cx", "https://avatars2.githubusercontent.com/u/135828?v=3")
+	privat.commit
 
 	# privat.ask_friend(config, morriar)
-	privat.add_friend(config, morriar)
-	privat.add_achievement(config, new FirstLoginAchievement(privat))
-	morriar.add_friend(config, privat)
-	morriar.add_achievement(config, new FirstLoginAchievement(morriar))
+	var first_login = new FirstLoginAchievement(ctx)
+	first_login.commit
+
+	privat.add_achievement(first_login)
+	print "privat got achievement"
+	morriar.add_achievement(first_login)
+	print "morriar got achievement"
+
+	var request = new FriendRequest(ctx, privat.id, morriar.id)
+	request.commit
+	print "Friend request created"
+	request.accept
+	print "Friend request accepted"
 
 	var aurl = "https://avatars.githubusercontent.com/u/2577044?v=3"
 	var players = new Array[Player]
@@ -86,39 +108,30 @@ if level >= 1 then
 
 	var player_count = 30 * level
 	for i in [0..player_count] do
-		var p = new Player("P{i}", "Player{i}", avatar_url=aurl)
+		var p = new Player(ctx, "P{i}", "Player{i}", "dummy@dummy.cx", aurl)
 		players.push p
+		p.commit
 	end
 
 	for player in players do
-		config.players.save player
-
-		# load some statuses
-		for mission in config.missions.find_all do
-			var status = new MissionStatus(mission, player, mission.track)
-			if mission.is_unlocked_for_player(config, player) or 100.rand > 25 then
-				status.status = "open"
-				for star in mission.stars do
-					status.stars_status.add new StarStatus(star, 100.rand > 50)
-				end
-			end
-			if status.unlocked_stars.not_empty then status.status = "success"
-			config.missions_status.save status
-		end
-
 		# Spread some love (or friendships =( )
 		for other_player in players do
-			if not player.has_friend(other_player) then
+			if other_player != player and not player.has_friend(other_player.id) then
 				var love = 10.rand
-				if love == 1 then player.add_friend(config, other_player)
+				if love == 1 then
+					print "Making {player.id} friend with {other_player.id}"
+					var rq = new FriendRequest(ctx, player.id, other_player.id)
+					rq.commit
+					print "Request commited"
+					rq.accept
+					print "Request accepted"
+				end
 			end
 		end
 	end
 
-	config.players.save new Player("John", "Doe")
+	print "Loaded {ctx.track_count} tracks"
+	print "Loaded {ctx.mission_count} missions"
+	print "Loaded {ctx.player_count} players"
+	#print "Loaded {} missions status"
 end
-
-print "Loaded {config.tracks.find_all.length} tracks"
-print "Loaded {config.missions.find_all.length} missions"
-print "Loaded {config.players.find_all.length} players"
-print "Loaded {config.missions_status.find_all.length} missions status"

@@ -13,7 +13,7 @@
 
 module loader
 
-import missions
+import stars
 import markdown
 private import md5
 
@@ -28,7 +28,7 @@ redef class ConfigTree
 	end
 end
 
-redef class AppConfig
+redef class DBContext
 	# Load all tracks that are subdirectories of `path`.
 	fun load_tracks(path: String) do
 		# Process files
@@ -66,7 +66,8 @@ redef class AppConfig
 		proc.emitter.decorator = new DescDecorator(path, "data")
 		var html = proc.process(content).write_to_string
 
-		var track = new Track(title_id, title, html)
+		var track = new Track(self, title, html, title_id)
+		track.path = path
 
 		var ls = ini["languages"]
 		if ls != null then
@@ -89,23 +90,28 @@ redef class AppConfig
 		var ss = ini.get_i("star.size.reward")
 		if ss != null then track.default_size_score = ss
 
-		var tmpl = (path / "template").to_path.read_all
-		if not tmpl.is_empty then track.default_template = tmpl
-
-		self.tracks.save track
-		track.load_missions(self, path)
+		track.commit
+		track.load_missions
 		return track
 	end
 end
 
 redef class Track
+	serialize
+
 	# Load the missions from the directory `path`.
-	fun load_missions(config: AppConfig, path: String) do
+	#
+	# NOTE: This creates the missions in the database, use wisely
+	fun load_missions do
+		var path = path
+		if path == null then return
 		var files = path.files.to_a
 		default_comparator.sort(files)
 
 		var missions = new POSet[Mission]
 		var mission_by_name = new HashMap[String, Mission]
+
+		var dependency_map = new HashMap[Mission, Array[String]]
 
 		# Process files
 		for f in files do
@@ -127,17 +133,19 @@ redef class Track
 			proc.emitter.decorator = new DescDecorator(ff, "data")
 			var html = proc.process(content).write_to_string
 
-			var title_id = self.id + ":" + title.strip_id
+			var mission_slug = "{slug}:{title.strip_id}"
 
-			var m = new Mission(title_id, self, title, html)
+			var m = new Mission(context, mission_slug, title, id, html)
 			mission_by_name[name] = m
+			var mission_parents = new Array[String]
 
 			m.path = ff
+			m.commit
 
 			var reqs = ini["req"]
 			if reqs != null then for r in reqs.split(",") do
 				r = r.trim
-				m.parents.add r
+				mission_parents.add r
 			end
 
 			m.solve_reward = ini.get_i("reward") or else default_reward
@@ -146,15 +154,17 @@ redef class Track
 			if tg != null then
 				var td = ini["star.time.desc"] or else default_time_desc
 				var ts = ini.get_i("star.time.reward") or else default_time_score
-				var star = new TimeStar(td, ts, tg)
-				m.add_star star
+				var star = new TimeStar(context, td, ts, m.id)
+				star.goal = tg
+				star.commit
 			end
 			var sg = ini.get_i("star.size.goal")
 			if sg != null then
 				var sd = ini["star.size.desc"] or else default_size_desc
 				var ss = ini.get_i("star.size.reward") or else default_size_score
-				var star = new SizeStar(sd, ss, sg)
-				m.add_star star
+				var star = new SizeStar(context, sd, ss, m.id)
+				star.goal = sg
+				star.commit
 			end
 			var ls = ini["languages"]
 			if ls != null then
@@ -168,89 +178,119 @@ redef class Track
 				m.languages.add_all self.default_languages
 			end
 
-			var tmpl
-			tmpl = (ff / "template").to_path.read_all
-			if tmpl.is_empty then tmpl = self.default_template
-			m.template = tmpl
+			dependency_map[m] = mission_parents
 
-			# Load tests, if any.
-			# This assume the Oto test file format:
-			# * Testcases start with the line `===`
-			# * input and output are separated  with the line `---`
-			var tf = ff / "tests.txt"
-			if tf.file_exists then
-				var i = ""
-				var o = ""
-				var in_input = true
-				var lines = tf.to_path.read_lines
-				if lines.first == "===" then lines.shift
-				lines.add "==="
-				var n = 0
-				for l in lines do
-					if l == "===" then
-						n += 1
-						var t = new TestCase(n, i, o)
-						m.testsuite.add t
-						i = ""
-						o = ""
-						in_input = true
-					else if l == "---" then
-						in_input = false
-					else if in_input then
-						i += l + "\n"
-					else
-						o += l + "\n"
-					end
-				end
-			end
-
-			print "{ff}: got «{m}»; {m.testsuite.length} tests. languages={m.languages.join(",")}"
+			#print "{ff}: got «{m}»; {m.testsuite.length} tests. languages={m.languages.join(",")}"
 
 			missions.add_node m
 		end
 
 		for m in missions do
-			# The mangoid of the parents
-			var reals = new Array[String]
-			for r in m.parents do
+			var mpar = dependency_map[m]
+			var marr = new Array[Mission]
+			for r in mpar do
 				var rm = mission_by_name.get_or_null(r)
 				if rm == null then
 					print_error "{m}: unknown requirement {r}"
 				else if missions.has_edge(rm, m) then
 					print_error "{m}: circular requirement with {rm}"
 				else
+					marr.add rm
 					missions.add_edge(m, rm)
-					reals.add rm.id
 				end
 			end
-
-			# replace parents' id and save
-			m.parents.clear
-			m.parents.add_all reals
-			config.missions.save(m)
+			m.parents = marr
+			m.commit
 		end
 	end
 
 	# List of default allowed languages
-	var default_languages = new Array[String]
+	var default_languages = new Array[String] is noserialize
 
 	# Default reward for a solved mission
-	var default_reward = 10
+	var default_reward = 10 is noserialize
 
 	# Default description of a time star
-	var default_time_desc = "Instruction CPU"
+	var default_time_desc = "Instruction CPU" is noserialize
 
 	# Default reward for a time star
-	var default_time_score = 10
+	var default_time_score = 10 is noserialize
 
 	# Default description of a size star
-	var default_size_desc = "Taille du code machine"
+	var default_size_desc = "Taille du code machine" is noserialize
 
 	# Default reward for a size star
-	var default_size_score = 10
+	var default_size_score = 10 is noserialize
 
 	# Default template for the source code
-	var default_template: nullable String = null
+	var default_template: nullable String is lazy do
+		var p = path
+		if p == null then return null
+		var tmpl_path = (p / "template").to_path
+		if tmpl_path.exists then return tmpl_path.read_all
+		return null
+	end
+end
+
+redef class Mission
+	serialize
+
+	# The set of unit tests used to validate the mission
+	#
+	# This is done in `Mission` instead of a subclass to limit the number of classes
+	# and maybe simplify the serialization/API.
+	# If a mission has no test-case, an empty array should be enough for now.
+	var testsuite: Array[TestCase] is lazy do
+		var ff = path
+		var tests = new Array[TestCase]
+		if ff == null or ff.is_empty then return tests
+		# Load tests, if any.
+		# This assume the Oto test file format:
+		# * Testcases start with the line `===`
+		# * input and output are separated  with the line `---`
+		var tf = ff / "tests.txt"
+		#print "Test path is {tf}, exists? {tf.file_exists}"
+		if tf.file_exists then
+			var i = ""
+			var o = ""
+			var in_input = true
+			var lines = tf.to_path.read_lines
+			if lines.first == "===" then lines.shift
+			lines.add "==="
+			var n = 0
+			for l in lines do
+				if l == "===" then
+					n += 1
+					var t = new TestCase(i, o, n)
+					tests.add t
+					i = ""
+					o = ""
+					in_input = true
+				else if l == "---" then
+					in_input = false
+				else if in_input then
+					i += l + "\n"
+				else
+					o += l + "\n"
+				end
+			end
+		end
+		return tests
+	end
+
+	# Template for the source code
+	var template: nullable String is lazy do
+		var path = path
+		if path == null then return null
+		var tmpl
+		tmpl = (path / "template").to_path.read_all
+		if tmpl.is_empty then
+			var t = track
+			if t == null then return null
+			return t.default_template
+		end
+		return tmpl
+	end
 end
 
 class DescDecorator
@@ -319,32 +359,5 @@ class DescDecorator
 		else
 			super(v, new_link, name, comment)
 		end
-	end
-end
-
-redef class String
-	# Replace sequences of non-alphanumerical characters by underscore.
-	#
-	# ~~~
-	# assert "abcXYZ123_".strip_id == "abcXYZ123_"
-	# assert ", 'A[]\nB#$_".strip_id == "_A_B_"
-	# ~~~
-	fun strip_id: String
-	do
-		var res = new Buffer
-		var sp = false
-		for c in chars do
-			if not c.is_alphanumeric then
-				sp = true
-				continue
-			end
-			if sp then
-				res.add '_'
-				sp = false
-			end
-			res.add c
-		end
-		if sp then res.add '_'
-		return res.to_s
 	end
 end
