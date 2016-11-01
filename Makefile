@@ -28,9 +28,12 @@ bin/db_loader:
 	nitserial src/db_loader.nit -o src/db_loader_serial.nit
 	nitc src/db_loader.nit -m src/db_loader_serial.nit -o bin/db_loader
 
-populate: bin/db_loader
+populate: bin/db_loader init_db
 	# There are levels to this... try: `make populate level=2`
 	bin/db_loader $(level)
+
+init_db:
+	sqlite3 Missions < init.sql
 
 run:
 	bin/app --auth shib
