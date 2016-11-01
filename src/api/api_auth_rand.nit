@@ -38,7 +38,7 @@ class RandLogin
 		if session == null then return
 		var id = req.get_args.get_or_null("id")
 		if id == null then return
-		var player = config.players.find_by_id(id)
+		var player = req.ctx.player_by_slug(id)
 		if player == null then return
 		session.player = player
 		res.redirect "/player"

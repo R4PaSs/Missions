@@ -30,6 +30,11 @@ class APIRouter
 	var config: AppConfig
 end
 
+redef class HttpRequest
+	# The datbase context to which `self` is attached
+	var ctx: DBContext is lazy do return new DBContext
+end
+
 abstract class PlayerHandler
 	super APIHandler
 
@@ -39,11 +44,9 @@ abstract class PlayerHandler
 			res.api_error("Missing URI param `login`", 400)
 			return null
 		end
-		var player = config.players.find_by_id(pid)
-		if player == null then
-			res.api_error("Player `{pid}` not found", 404)
-			return null
-		end
+		var player = null
+		player = req.ctx.player_by_slug(pid)
+		if player == null then res.api_error("Player `{pid}` not found", 404)
 		return player
 	end
 end
@@ -57,11 +60,9 @@ abstract class TrackHandler
 			res.api_error("Missing URI param `tid`", 400)
 			return null
 		end
-		var track = config.tracks.find_by_id(tid)
-		if track == null then
-			res.api_error("Track `{tid}` not found", 404)
-			return null
-		end
+		var track = null
+		track = req.ctx.track_by_slug(tid)
+		if track == null then res.api_error("Track `{tid}` not found", 404)
 		return track
 	end
 end
@@ -75,11 +76,9 @@ abstract class MissionHandler
 			res.api_error("Missing URI param `mid`", 400)
 			return null
 		end
-		var mission = config.missions.find_by_id(mid)
-		if mission == null then
-			res.api_error("Mission `{mid}` not found", 404)
-			return null
-		end
+		var mission = null
+		mission = req.ctx.mission_by_slug(mid)
+		if mission == null then res.api_error("Mission `{mid}` not found", 404)
 		return mission
 	end
 end

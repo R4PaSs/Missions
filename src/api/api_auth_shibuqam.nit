@@ -86,12 +86,11 @@ class ShibCallback
 		end
 
 		# Get the player (a new or an old one)
-		var id = user.id
-		var player = config.players.find_by_id(id)
+		var slug = user.id
+		var ctx = req.ctx
+		var player = ctx.player_by_slug(slug)
 		if player == null then
-			player = new Player(id)
-			player.name = user.display_name
-			player.avatar_url = user.avatar
+			player = new Player(ctx, slug, user.display_name, user.email, user.avatar)
 			register_new_player(player)
 		end
 		session.player = player

@@ -26,7 +26,7 @@ redef class SessionRefresh
 		if session.auto_logged then return
 		var player = session.player
 		if player == null then
-			session.player = config.players.find_by_id(config.debug_player)
+			session.player = req.ctx.player_by_slug(config.debug_player)
 			session.auto_logged = true
 		end
 	end

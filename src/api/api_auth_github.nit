@@ -66,11 +66,10 @@ class MissionsGithubOAuthCallBack
 		var user = session.user
 		if user == null then return
 		var id = user.login
-		var player = config.players.find_by_id(id)
+		var player = req.ctx.player_by_slug(id)
 		if player == null then
-			player = new Player(id)
-			player.name = user.login
-			player.avatar_url = user.avatar_url
+			var avatar = user.avatar_url or else ""
+			player = new Player(req.ctx, id, user.login, "", avatar)
 			register_new_player(player)
 		end
 		session.player = player

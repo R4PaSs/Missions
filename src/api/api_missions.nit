@@ -23,6 +23,7 @@ redef class APIRouter
 		super
 		use("/missions", new APIMissions(config))
 		use("/missions/:mid", new APIMission(config))
+		use("/missions/:mid/status", new APIMissionStatus(config))
 	end
 end
 
@@ -30,7 +31,7 @@ class APIMissions
 	super APIHandler
 
 	redef fun get(req, res) do
-		res.json new JsonArray.from(config.missions.find_all)
+		res.json new JsonArray.from(req.ctx.all_missions)
 	end
 end
 
@@ -44,6 +45,9 @@ class APIMission
 		var mission = get_mission(req, res)
 		if mission == null then return
 
+		var mstat = mission.status_for(player.id)
+		if mstat == null or mstat.status == req.ctx.mission_locked then return
+
 		var post = req.body
 
 		var deserializer = new JsonDeserializer(post)
@@ -54,8 +58,9 @@ class APIMission
 			return
 		end
 		var runner = config.engine_map[submission_form.engine]
-		var submission = new Submission(player, mission, submission_form.source.decode_base64.to_s)
-		runner.run(submission, config)
+
+		var submission = new Submission(req.ctx, player.id, mission.id, submission_form.source.decode_base64.to_s)
+		runner.run(submission)
 
 		res.json submission
 	end
@@ -64,5 +69,17 @@ class APIMission
 		var mission = get_mission(req, res)
 		if mission == null then return
 		res.json mission
+	end
+end
+
+class APIMissionStatus
+	super MissionHandler
+	super AuthHandler
+	
+	redef fun get(req, res) do
+		var mission = get_mission(req, res)
+		var player = get_player(req, res)
+		if mission == null or player == null then return
+		res.json mission.status_for(player.id)
 	end
 end

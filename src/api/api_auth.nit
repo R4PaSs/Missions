@@ -78,7 +78,7 @@ class SessionRefresh
 		if session == null then return
 		var player = session.player
 		if player == null then return
-		session.player = config.players.find_by_id(player.id)
+		session.player = req.ctx.player_by_id(player.id)
 	end
 end
 
@@ -114,8 +114,14 @@ abstract class AuthLogin
 	# Helper method to use when a new account is created.
 	fun register_new_player(player: Player)
 	do
-		player.add_achievement(config, new FirstLoginAchievement(player))
-		config.players.save player
+		var ctx = player.context
+		var first_login = ctx.achievement_by_slug("hello_world")
+		if first_login == null then
+			first_login = new FirstLoginAchievement(ctx)
+			first_login.commit
+		end
+		player.add_achievement(first_login)
+		player.commit
 	end
 
 	# Redirect to the `next` page.
@@ -146,6 +152,7 @@ class AuthHandler
 			res.api_error("Unauthorized", 403)
 			return null
 		end
+		player.context = req.ctx
 		return player
 	end
 end
@@ -172,11 +179,9 @@ end
 class FirstLoginAchievement
 	super Achievement
 	serialize
-	autoinit player
+	autoinit(context)
 
-	redef var key = "first_login"
 	redef var title = "Hello World!"
 	redef var desc = "Login into the mission board for the first time."
 	redef var reward = 10
-	redef var icon = "log-in"
 end

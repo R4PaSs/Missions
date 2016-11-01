@@ -22,6 +22,7 @@ redef class APIRouter
 		super
 		use("/tracks", new APITracks(config))
 		use("/tracks/:tid", new APITrack(config))
+		use("/tracks/:tid/status", new APITrackStatus(config))
 		use("/tracks/:tid/missions", new APITrackMissions(config))
 	end
 end
@@ -30,7 +31,7 @@ class APITracks
 	super APIHandler
 
 	redef fun get(req, res) do
-		res.json new JsonArray.from(config.tracks.find_all)
+		res.json new JsonArray.from(req.ctx.all_tracks)
 	end
 end
 
@@ -44,12 +45,26 @@ class APITrack
 	end
 end
 
+class APITrackStatus
+	super TrackHandler
+	super AuthHandler
+
+	redef fun get(req, res) do
+		var track = get_track(req, res)
+		if track == null then return
+		var player = get_player(req, res)
+		if player == null then return
+		var status = track.status_for(player.id)
+		res.json status
+	end
+end
+
 class APITrackMissions
 	super TrackHandler
 
 	redef fun get(req, res) do
 		var track = get_track(req, res)
 		if track == null then return
-		res.json new JsonArray.from(config.missions.find_by_track(track))
+		res.json new JsonArray.from(track.missions)
 	end
 end

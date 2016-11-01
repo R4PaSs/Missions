@@ -30,7 +30,7 @@ class APIAchievements
 	super APIHandler
 
 	redef fun get(req, res) do
-		res.json new JsonArray.from(config.achievements.group_achievements)
+		res.json new JsonArray.from(req.ctx.all_achievements)
 	end
 end
 
@@ -43,7 +43,7 @@ class APIAchievement
 			res.api_error("Missing URI param `aid`", 400)
 			return null
 		end
-		var achievement = config.achievements.find_by_key(aid)
+		var achievement = req.ctx.achievement_by_slug(aid)
 		if achievement == null then
 			res.api_error("Achievement `{aid}` not found", 404)
 			return null
@@ -64,6 +64,6 @@ class APIAchievementPlayers
 	redef fun get(req, res) do
 		var achievement = get_achievement(req, res)
 		if achievement == null then return
-		res.json new JsonArray.from(achievement.players(config))
+		res.json new JsonArray.from(achievement.players)
 	end
 end
