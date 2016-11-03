@@ -32,7 +32,7 @@
 					lang: vm.lang,
 					engine: vm.engine
 				};
-				Missions.sendMissionSubmission(data, vm.mission._id, function (data) {
+				Missions.sendMissionSubmission(data, vm.mission.slug, function (data) {
 					// Only launch fireworks on new success
 					if (vm.missionStatus.status !== "success" && data.status === "success") {
 						launchFireworks();

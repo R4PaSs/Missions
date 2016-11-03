@@ -8,14 +8,14 @@
 	</div>
 	<div class='card-body'>
 		<h4>
-			<a ui-sref=".mission({ mid: missionCtrl.mission._id })">{{missionCtrl.mission.title}}</a>
+			<a ui-sref=".mission({ mid: missionCtrl.mission.slug })">{{missionCtrl.mission.title}}</a>
 		</h4>
 		<p><b class='text-muted'>Reward</span>: {{missionCtrl.mission.reward}} pts</b></p>
 	</div>
 	<div class='card-right panel-mission-control'>
 		<h4 class='text-center'>
 			<mission-stars mission='missionCtrl.mission' mission-status='missionCtrl.missionStatus' />
-			<span ng-if='missionCtrl.mission.stars.__items.length == 0'>&nbsp;</span>
+			<span ng-if='missionCtrl.mission.stars.length == 0'>&nbsp;</span>
 		</h4>
 		<div>
 			<mission-btn mission='missionCtrl.mission' mission-status='missionCtrl.missionStatus' />

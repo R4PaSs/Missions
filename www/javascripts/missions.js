@@ -13,14 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 (function() {
 	angular
 		.module('missions', ['ngSanitize', 'model'])
 
 		.controller('MissionHome', ['$stateParams', '$state', '$rootScope', '$scope', function($stateParams, $state, $rootScope, $scope) {
 			if($rootScope.session) {
-				$scope.playerId = $rootScope.session._id;
+				$scope.playerId = $rootScope.session.slug;
 			}
 
 			if($stateParams.mid == "" || !!$stateParams.mid === false) {
@@ -138,7 +137,13 @@
 				},
 				controller: function () {
 					this.isSuccess = function() {
-						return this.starStatus && this.starStatus.is_unlocked;
+						var vm = this
+						var stat = vm.starStatus
+						if(!stat) {return;}
+						for(i = 0; i < stat.length; i++) {
+							var sstat = stat[i];
+							if(vm.star._id == sstat.star_id) { return sstat.is_unlocked; }
+						}
 					}
 				},
 				link: function($scope, $elem) {

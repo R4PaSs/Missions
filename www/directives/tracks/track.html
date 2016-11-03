@@ -28,11 +28,12 @@
 					<mission-panel
 						ng-repeat='(i, mission) in trackCtrl.missions'
 						index='i + 1' mission='mission'
-						mission-status='trackCtrl.trackStatus.missions.__items[i]' />
+						mission-status='trackCtrl.trackStatus.missions_status.__items[i]'/>
 				</div>
 				<div class='col-xs-3 col-xs-height'>
 					<track-tree missions='trackCtrl.missions'
-						missions-status='trackCtrl.trackStatus.missions.__items' />
+						missions-status='trackCtrl.trackStatus.missions_status'
+						track='trackCtrl.track'/>
 				</div>
 			</div>
 		</div>

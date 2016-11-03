@@ -87,8 +87,18 @@
 						.success(cb)
 						.error(cbErr);
 				},
+				getTrackMissionStatuses: function(login, tid, cb, cbErr) {
+					$http.get(apiUrl + '/players/' + login + '/track/' + tid + '/missions_status')
+						.success(cb)
+						.error(cbErr);
+				},
 				getTrackStatus: function(login, trackId, cb, cbErr) {
 					$http.get(apiUrl + '/players/' + login + '/tracks/' + trackId)
+						.success(cb)
+						.error(cbErr);
+				},
+				getTrackMissionStars: function(login, tid, cb, cbErr) {
+					$http.get(apiUrl + '/players/' + login + '/track/' + tid + '/stars_status')
 						.success(cb)
 						.error(cbErr);
 				},
@@ -141,6 +151,11 @@
 						.success(cb)
 						.error(cbErr);
 				},
+				getTrackStatus: function(tid, cb, cbErr) {
+					$http.get(apiUrl + '/tracks/' + tid + '/status')
+						.success(cb)
+						.error(cbErr);
+				},
 				getTrackMissions: function(tid, cb, cbErr) {
 					$http.get(apiUrl + '/tracks/' + tid + '/missions')
 						.success(cb)
@@ -154,6 +169,11 @@
 					$http.get(apiUrl + '/missions/' + mid)
 						.success(cb)
 						.error(cbErr);
+				},
+				getMissionStatus: function(mis, cb, cbErr) {
+					$http.get(apiUrl + '/missions/' + mid + '/status')
+						.success(cb)
+						.success(cbErr);
 				},
 				sendMissionSubmission: function(data, mid, cb, cbErr) {
 					$http.post(apiUrl + '/missions/' + mid, data)

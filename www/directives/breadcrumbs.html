@@ -1,14 +1,14 @@
 <ol class='breadcrumb'>
 	<li ng-if='track'>
-		<a ui-sref="track({tid: track._id})">{{track.title}}</a>
+		<a ui-sref="track({tid: track.slug})">{{track.title}}</a>
 	</li>
 	<li ng-if='mission'>
-		<a ui-sref="track.mission({tid: track._id, mid: mission._id})">{{mission.title}}</a>
+		<a ui-sref="track.mission({tid: track.slug, mid: mission.slug})">{{mission.title}}</a>
 	</li>
 	<li ng-if='player'>
 		players
 	</li>
 	<li ng-if='player'>
-		<a ui-sref="player({login: player._id})">{{player._id}}</a>
+		<a ui-sref="player({login: player.slug})">{{player.slug}}</a>
 	</li>
 </ol>

@@ -4,7 +4,7 @@
 		<li ng-repeat='friend in friendsCtrl.friends'>
 			<player-link player='friend' />
 			<a href='#' class='pull-right text-muted' title='Remove friend'
-				ng-click='friendsCtrl.removeFriend(friend._id)'
+				ng-click='friendsCtrl.removeFriend(friend.slug)'
 				ng-if='friendsCtrl.session._id == friendsCtrl.playerId'>
 				<span class='glyphicon glyphicon-remove' />
 			</a>

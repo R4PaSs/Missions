@@ -20,7 +20,7 @@
 
 		.controller('TrackHome', ['$stateParams', '$state', '$rootScope', '$scope', function($stateParams, $state, $rootScope, $scope) {
 			if($rootScope.session) {
-				$scope.playerId = $rootScope.session._id;
+				$scope.playerId = $rootScope.session.slug;
 			}
 
 			if($stateParams.tid == "" || !!$stateParams.tid === false) {
@@ -93,7 +93,6 @@
 						function(data) {
 							$ctrl.missions = data;
 						}, Errors.handleError);
-
 				}],
 				controllerAs: 'trackCtrl',
 				restrict: 'E',
@@ -203,7 +202,8 @@
 				restrict: 'E',
 				scope: {
 					missions: '=',
-					missionsStatus: '='
+					missionsStatus: '=',
+					track: '='
 				},
 				templateUrl: '/directives/tracks/track-tree.html',
 				link: function ($scope, element, attrs) {
@@ -211,10 +211,9 @@
 						var map = {};
 						missions.forEach(function(mission, index) {
 							map[mission._id] = mission;
-							if(missionsStatus) {
-								map[mission._id].status = missionsStatus[index];
-							} else {
-								map[mission._id].status = { status: 'locked' };
+							if(missionsStatus.__items[index]) {
+								var mission = map[mission._id]
+								mission.status = missionsStatus.__items[index];
 							}
 						});
 						return map;
@@ -238,6 +237,7 @@
 						function draw(isUpdate) {
 							var map = $scope.buildMap(missions, missionsStatus);
 							missions.forEach(function(mission, index) {
+
 								g.setNode(mission._id, {
 									labelType: "html",
 									label: "<p class='number'>" + (index + 1) + "</p>",
@@ -247,17 +247,18 @@
 									id: mission._id,
 									class: mission.status.status
 								});
-								mission.parents.__items.forEach(function(parent) {
-									g.setEdge(parent, mission._id, {
-										class: map[parent].status
+								mission.parents.forEach(function(parent) {
+									status = mission.status.status
+									g.setEdge(parent._id, mission._id, {
+										class: map[parent._id].status
 									});
 								});
 							});
 
-							var hasStar = function(star, stars) {
-								for(var i = 0; i < stars.__items.length; i++) {
-									var s = stars.__items[i]
-									if(s._id == star._id) return true;
+							var hasStar = function(star, starsStatus) {
+								for(var i = 0; i < starsStatus.__items.length; i++) {
+									var s = starsStatus.__items[i];
+									if(s.is_unlocked && s.star_id == star._id) return true;
 								}
 								return false;
 							}
@@ -274,9 +275,9 @@
 									html += "<div class='mission-tip " + status + "'>" +
 												"<h3>" + mission.title + "</h3>" +
 												"<p>" + mission.reward + " pts</p>"
-									for(var i in mission.stars.__items) {
-										var star = mission.stars.__items[i];
-										if(hasStar(star, mission.status.stars_status)) {
+									for(var i in mission.stars) {
+										var star = mission.stars[i];
+										if(hasStar(star, mission.status.star_status)) {
 											html += "<span class='glyphicon glyphicon-star' />";
 										} else {
 											html += "<span class='glyphicon glyphicon-star-empty' />";
@@ -287,14 +288,13 @@
 								}
 							});
 							$("svg .node").click(function() {
-								var trackId;
-								var clickedMission = this;
+								var mid = this.id;
+								var ms;
 								missions.forEach(function(m) {
-									if(m.id === clickedMission.id) {
-										trackId = m.track.id;
-									}
+									if(m._id == mid) { ms = m.slug; }
 								});
-								window.location.href = "/track/" + trackId + "/" + this.id;
+								var ts = $scope.track.slug;
+								window.location.href = "/track/" + ts + "/" +  ms;
 							});
 
 							// Zoom and scale to fit

@@ -25,7 +25,7 @@
 		.controller('PlayerAuth', ['$stateParams', '$rootScope', '$scope', function($stateParams, $rootScope, $scope) {
 
 			if($rootScope.session) {
-				$scope.playerId = $rootScope.session._id;
+				$scope.playerId = $rootScope.session.slug;
 			}
 			$scope.notifId = $stateParams.nid;
 
@@ -63,7 +63,7 @@
 					var vm = this;
 
 					this.loadPlayer = function() {
-						Players.getPlayer(vm.playerId,
+						Players.getPlayer(vm.session.slug,
 							function(data) {
 								vm.player = data;
 								// Set breadcrumbs
@@ -122,7 +122,7 @@
 					var vm = this;
 
 					this.loadStats = function() {
-						Players.getStats(this.player._id,
+						Players.getStats(this.player.slug,
 							function(data) {
 								vm.stats = data;
 							}, Errors.handleError);

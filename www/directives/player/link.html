@@ -1,8 +1,8 @@
 <span>
-	<a ui-sref="player({login: player._id})" ng-if='!noavatar'>
+	<a ui-sref="player({login: player.slug})" ng-if='!noavatar'>
 		<img class='avatar avatar-icon' ng-src='{{player.avatar_url}}' />
 	</a>
-	<a ui-sref="player({login: player._id})">
+	<a ui-sref="player({login: player.slug})">
 		{{player.name}}
 	</a>
 </span>

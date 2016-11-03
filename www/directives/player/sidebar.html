@@ -26,12 +26,12 @@
 	</ul>
 
 	<hr>
-	<ul class='list-unstyled' ng-if='sidebarCtrl.session && sidebarCtrl.session._id != sidebarCtrl.stats.player._id && !sidebarCtrl.hasFriend()'>
+	<ul class='list-unstyled' ng-if='sidebarCtrl.session && sidebarCtrl.session.slug != sidebarCtrl.stats.player.slug && !sidebarCtrl.hasFriend()'>
 		<li>
-			<friend-btn session='sidebarCtrl.session' player-id='sidebarCtrl.stats.player._id' />
+			<friend-btn session='sidebarCtrl.session' player-id='sidebarCtrl.stats.player.slug' />
 		</li>
 	</ul>
 	<div ng-if='sidebarCtrl.stats.player.friends.__items.length > 0'>
-		<friends-list session='sidebarCtrl.session' player-id='sidebarCtrl.stats.player._id'>
+		<friends-list session='sidebarCtrl.session' player-id='sidebarCtrl.stats.player.slug'>
 	</div>
 </div>

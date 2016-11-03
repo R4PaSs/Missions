@@ -87,7 +87,7 @@
 				},
 				controller: ['Errors', 'Players', function (Errors, Players) {
 					$playerAchsCtrl = this;
-					Players.getAchievements(this.player._id,
+					Players.getAchievements(this.player.slug,
 						function(data) {
 							$playerAchsCtrl.achievements = data;
 						}, Errors.handleError);

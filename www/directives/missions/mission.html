@@ -38,6 +38,6 @@
 				</div>
 		</div>
 		<mission-submit mission='missionCtrl.mission' mission-status='missionCtrl.missionStatus'
-			ng-if='missionCtrl.playerId' />
+			ng-if='missionCtrl.playerId && missionCtrl.missionStatus.status != "locked"' />
 	</div>
 </div>
