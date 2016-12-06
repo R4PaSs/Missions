@@ -19,7 +19,8 @@ redef class AppConfig
 	# Map of all supported engines for problem solving
 	var engine_map = new HashMap[String, Engine]
 
-	init do
+	redef init do
+		super
 		engine_map["pep8term"] = new Pep8Engine
 	end
 end

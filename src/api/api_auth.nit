@@ -21,32 +21,29 @@ redef class AppConfig
 	# Authentification method used
 	#
 	# At this point can be either `github` or `shib`, see the clients modules.
-	var auth_methods: Array[String] is lazy do return value_or_default("auth", default_auth_method).split(",")
+	fun auth_methods: Array[String] do return (ini["auth"] or else default_auth_method).split(",")
 
 	# Default authentification method used
 	#
 	# Will be refined based on what auth method we implement.
 	fun default_auth_method: String is abstract
 
-	redef init from_options(opts) do
-		super
-		var auth_methods = opts.opt_auth_method.value
-		if not auth_methods.is_empty then
-			self["auth"] = auth_methods.join(",")
-		end
-	end
-end
-
-redef class AppOptions
-
 	# Authentification to use
 	#
 	# Can be either `github` or `shib`.
 	var opt_auth_method = new OptionArray("Authentification service to use. Can be `github` (default) and/or `shib`", "--auth")
 
-	init do
+	redef init do
 		super
 		add_option(opt_auth_method)
+	end
+
+	redef fun parse_options(opts) do
+		super
+		var auth_methods = opt_auth_method.value
+		if not auth_methods.is_empty then
+			ini["auth"] = auth_methods.join(",")
+		end
 	end
 end
 

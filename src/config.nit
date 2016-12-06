@@ -20,10 +20,10 @@ import popcorn::pop_repos
 redef class AppConfig
 
 	# Github client id used for Github OAuth login.
-	var gh_client_id: String is lazy do return value_or_default("github.client.id", "")
+	fun gh_client_id: String do return ini["github.client.id"] or else ""
 
 	# Github client secret used for Github OAuth login.
-	var gh_client_secret: String is lazy do return value_or_default("github.client.secret", "")
+	fun gh_client_secret: String do return ini["github.client.secret"] or else ""
 
 	# Site root url to use for some redirect
 	# Useful if behind some reverse proxy
@@ -32,6 +32,6 @@ redef class AppConfig
 		var port = app_port
 		var url = "http://{host}"
 		if port != 80 then url += ":{port}"
-		return value_or_default("app.root_url", url)
+		return ini["app.root_url"] or else url
 	end
 end

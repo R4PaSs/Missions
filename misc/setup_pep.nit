@@ -10,8 +10,8 @@ import model::loader
 import submissions
 import api
 
-var opts = new AppOptions.from_args(args)
-var config = new AppConfig.from_options(opts)
+var config = new AppConfig
+config.parse_options(args)
 
 # clean bd
 config.db.drop
@@ -31,7 +31,7 @@ for mission in config.missions.find_all do
 		print "  no path. skip"
 		continue
 	end
-	
+
 	# Get a potential solution
 	var f = (path / "solution.pep").to_path
 	var source = f.read_all
@@ -55,8 +55,8 @@ for mission in config.missions.find_all do
 	# If success, update the goals in the original .ini file
 	if sub.status == "success" then
 		var ini = new ConfigTree((path / "config.ini").to_s)
-		ini["star.time_goal"] = sub.time_score.to_s
-		ini["star.size_goal"] = sub.size_score.to_s
+		ini["star.time_goal"] = (sub.time_score or else "").to_s
+		ini["star.size_goal"] = (sub.size_score or else "").to_s
 		ini.save
 	end
 end
