@@ -18,10 +18,17 @@ import model::model_base
 
 redef class DBContext
 
+	var player_cache = new HashMap[Int, Player]
+
 	fun player_worker: PlayerWorker do return once new PlayerWorker
 
 	# Tries to find a player item from its `id`
-	fun player_by_id(id: Int): nullable Player do return player_worker.fetch_one(self, "* FROM players WHERE id = {id};")
+	fun player_by_id(id: Int): nullable Player do
+		if player_cache.has_key(id) then return player_cache[id]
+		var p = player_worker.fetch_one(self, "* FROM players WHERE id = {id};")
+		if p != null then player_cache[id] = p
+		return p
+	end
 
 	# Gets the `limit` top players by score
 	fun all_players: Array[Player] do return player_worker.fetch_multiple(self, "* FROM players;")
@@ -42,6 +49,7 @@ class PlayerWorker
 	redef fun make_entity_from_row(ctx, row) do
 		var m = row.map
 		var id = m["id"].as(Int)
+		if ctx.player_cache.has_key(id) then return ctx.player_cache[id]
 		var slug = m["slug"].as(String)
 		var name = m["name"].as(String)
 		var email = m["email"].as(String)
@@ -50,6 +58,7 @@ class PlayerWorker
 		var p = new Player(ctx, slug, name, email, avatar_url)
 		p.id = id
 		p.date_joined = date
+		ctx.player_cache[id] = p
 		return p
 	end
 end
@@ -87,7 +96,9 @@ class Player
 
 	redef fun insert do
 		if date_joined == -1 then date_joined = get_time
-		return basic_insert("INSERT INTO players(slug, name, date_joined, email, avatar_url) VALUES({slug.to_sql_string}, {name.to_sql_string}, {date_joined}, {email.to_sql_string}, {avatar_url.to_sql_string});")
+		var ret = basic_insert("INSERT INTO players(slug, name, date_joined, email, avatar_url) VALUES({slug.to_sql_string}, {name.to_sql_string}, {date_joined}, {email.to_sql_string}, {avatar_url.to_sql_string});")
+		if ret then context.player_cache[id] = self
+		return ret
 	end
 
 	redef fun update do return basic_update("UPDATE players SET name = {name.to_sql_string}, email = {email.to_sql_string}, avatar_url = {avatar_url.to_sql_string} WHERE id = {id};")

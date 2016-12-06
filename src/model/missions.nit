@@ -11,18 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 module missions
 
 import model::players
 
 redef class DBContext
 
+	# Cache for missions by their ID
+	#
+	# Used for fast fetching and shared instances
+	var mission_cache = new HashMap[Int, Mission]
+
 	fun mission_worker: MissionWorker do return once new MissionWorker
 
 	fun mission_status_worker: MissionStatusWorker do return once new MissionStatusWorker
 
-	fun mission_by_id(id: Int): nullable Mission do return mission_worker.fetch_one(self, "* FROM missions WHERE id = {id};")
+	fun mission_by_id(id: Int): nullable Mission do
+		if mission_cache.has_key(id) then return mission_cache[id]
+		var m = mission_worker.fetch_one(self, "* FROM missions WHERE id = {id};")
+		if m != null then mission_cache[id] = m
+		return m
+	end
 
 	fun mission_by_slug(slug: String): nullable Mission do return mission_worker.fetch_one(self, "* FROM missions WHERE slug = {slug.to_sql_string};")
 
@@ -51,6 +60,7 @@ class MissionWorker
 	redef fun make_entity_from_row(ctx, row) do
 		var map = row.map
 		var id = map["id"].as(Int)
+		if ctx.mission_cache.has_key(id) then return ctx.mission_cache[id]
 		var slug = map["slug"].as(String)
 		var title = map["title"].as(String)
 		var tid = map["track_id"].as(Int)
@@ -61,6 +71,7 @@ class MissionWorker
 		ret.id = id
 		ret.solve_reward = rew
 		ret.load_languages
+		ctx.mission_cache[id] = ret
 		return ret
 	end
 end
@@ -178,7 +189,9 @@ class Mission
 	redef fun insert do
 		var p = path
 		if p != null then p = p.to_sql_string
-		return basic_insert("INSERT INTO missions(slug, title, track_id, description, reward, path) VALUES({slug.to_sql_string}, {title.to_sql_string}, {track_id}, {desc.to_sql_string}, {solve_reward}, {p or else "NULL"});") and set_dependencies
+		var ret = basic_insert("INSERT INTO missions(slug, title, track_id, description, reward, path) VALUES({slug.to_sql_string}, {title.to_sql_string}, {track_id}, {desc.to_sql_string}, {solve_reward}, {p or else "NULL"});") and set_dependencies
+		if ret then context.mission_cache[id] = self
+		return ret
 	end
 
 	redef fun update do
