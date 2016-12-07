@@ -16,7 +16,7 @@ config.parse_options(args)
 config.db.drop
 
 # Load nit
-config.load_track("tracks/nit")
+config.load_track("tracks-wip/nit")
 
 # Create a dummy user
 var player = new Player("John", "Doe")
